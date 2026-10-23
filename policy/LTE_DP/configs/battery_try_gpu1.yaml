@@ -1,0 +1,13 @@
+# Full native DP architecture with LTE, Battery Try, physical GPU 1.
+# The launch script selects GPU 1; the process sees it as cuda:0.
+dataloader:
+  batch_size: 32
+val_dataloader:
+  batch_size: 32
+training:
+  device: cuda:0
+  num_epochs: 600
+  seed: 0
+policy:
+  temporal_num_images: 1
+  embedding_cache_refresh_steps: 5000

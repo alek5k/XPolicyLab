@@ -1,0 +1,5 @@
+.venv*/
+data/
+checkpoints/
+smoke_artifacts/
+.pytest_cache/

@@ -1,0 +1,20 @@
+# Same native training loop, with a small two-epoch smoke configuration.
+policy:
+  down_dims: [32, 64, 128]
+  diffusion_step_embed_dim: 32
+  num_inference_steps: 2
+  encode_chunk_size: 16
+dataloader:
+  batch_size: 2
+val_dataloader:
+  batch_size: 2
+training:
+  device: cuda:0
+  num_epochs: 2
+  max_train_steps: 2
+  max_val_steps: 1
+  checkpoint_every: 1
+  sample_every: 1
+  resume: false
+  lr_warmup_steps: 0
+  tqdm_interval_sec: 60

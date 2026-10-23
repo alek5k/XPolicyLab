@@ -10,6 +10,7 @@ if __name__ == "__main__":
 import os
 import hydra
 import torch
+import wandb
 from omegaconf import OmegaConf
 import pathlib
 from torch.utils.data import DataLoader
@@ -106,17 +107,18 @@ class RobotWorkspace(BaseWorkspace):
         # assert isinstance(env_runner, BaseImageRunner)
         env_runner = None
 
-        # configure logging
-        # wandb_run = wandb.init(
-        #     dir=str(self.output_dir),
-        #     config=OmegaConf.to_container(cfg, resolve=True),
-        #     **cfg.logging
-        # )
-        # wandb.config.update(
-        #     {
-        #         "output_dir": self.output_dir,
-        #     }
-        # )
+        # Configure experiment tracking. Environment variables let a launcher
+        # choose a project/entity without changing the benchmark config.
+        wandb_kwargs = OmegaConf.to_container(cfg.logging, resolve=True)
+        wandb_kwargs["project"] = os.environ.get("WANDB_PROJECT", wandb_kwargs["project"])
+        if os.environ.get("WANDB_ENTITY"):
+            wandb_kwargs["entity"] = os.environ["WANDB_ENTITY"]
+        wandb_run = wandb.init(
+            dir=str(self.output_dir),
+            config=OmegaConf.to_container(cfg, resolve=True),
+            **wandb_kwargs,
+        )
+        wandb.config.update({"output_dir": self.output_dir})
 
         # configure checkpoint
         topk_manager = TopKCheckpointManager(save_dir=os.path.join(self.output_dir, "checkpoints"),
@@ -193,6 +195,7 @@ class RobotWorkspace(BaseWorkspace):
                         if not is_last_batch:
                             # log of last step is combined with validation and rollout
                             json_logger.log(step_log)
+                            wandb.log(step_log, step=self.global_step)
                             self.global_step += 1
 
                         if (cfg.training.max_train_steps
@@ -272,8 +275,11 @@ class RobotWorkspace(BaseWorkspace):
                 # end of epoch
                 # log of last step is combined with validation and rollout
                 json_logger.log(step_log)
+                wandb.log(step_log, step=self.global_step)
                 self.global_step += 1
                 self.epoch += 1
+
+        wandb_run.finish()
 
 
 class BatchSampler:

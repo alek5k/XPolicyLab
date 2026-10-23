@@ -1,0 +1,16 @@
+policy_name: LTE_DP
+protocol: ws
+host: localhost
+port: null
+bench_name: null
+task_name: null
+ckpt_name: null
+env_cfg_type: null
+seed: null
+action_type: null
+gpu_id: null
+eval_batch: false
+# Native DP selection: highest numbered epoch checkpoint, EMA weights.
+checkpoint_num: latest
+use_ema: true
+device: null

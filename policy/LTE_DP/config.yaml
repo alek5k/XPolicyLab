@@ -1,0 +1,35 @@
+# Overlay on policy/DP/diffusion_policy/config/robot_dp.yaml and its default_task.
+# All DP/training settings (horizon, loss, optimizer, EMA, epochs, etc.) inherit.
+_target_: XPolicyLab.policy.LTE_DP.workspace.LTEWorkspace
+policy:
+  _target_: XPolicyLab.policy.LTE_DP.policy.LTEDiffusionPolicy
+  temporal_num_images: 1 # Leading native RGB cameras; null = all, concatenated.
+  temporal_latent_dim: 32
+  temporal_hidden_dim: 128
+  history_decoder_hidden_dim: 128
+  num_history_queries: 16
+  lambda_history: 1.0
+  history_max_episode_length: null # Filled from episode metadata before training.
+  embedding_cache_refresh_steps: 5000
+  encode_chunk_size: 64
+task:
+  # LTE-only explicit camera/state configuration. The original DP default
+  # task file remains unchanged, including its original observation choices.
+  shape_meta:
+    obs:
+      left_cam:
+        shape: ${task.shape_meta.obs.head_cam.shape}
+        type: rgb
+      right_cam:
+        shape: ${task.shape_meta.obs.head_cam.shape}
+        type: rgb
+      agent_pos:
+        shape: null
+        type: low_dim
+  dataset:
+    _target_: XPolicyLab.policy.LTE_DP.data.LTEImageDataset
+    n_obs_steps: ${n_obs_steps}
+lte:
+  checkpoint_dir: null
+  dataset_metadata: null
+  log_every_updates: 100
