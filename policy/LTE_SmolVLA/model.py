@@ -116,6 +116,20 @@ class Model(SmolVLAModel):
             result.append(unpack_robot_state(actions, self.action_type, self.robot_action_dim_info, source_type="obs"))
         return result
 
+    def reset_envs(self, env_idx_list):
+        ids = {int(env_idx) for env_idx in env_idx_list}
+        for env_idx in ids:
+            self._temporal_states.pop(env_idx, None)
+            self._processed_observations.pop(env_idx, None)
+            self._latest_payloads.pop(env_idx, None)
+        self._latest_env_idx_list = [
+            env_idx for env_idx in self._latest_env_idx_list if env_idx not in ids
+        ]
+        if self._latest_payloads:
+            self._latest_payload = next(iter(self._latest_payloads.values()))
+        else:
+            self._latest_payload = None
+
     def reset(self):
         super().reset()
         self._latest_env_idx_list = []

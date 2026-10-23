@@ -43,7 +43,7 @@ def inherit_base_config(config, explicit_fields):
             values[field.name] = getattr(config, field.name)
     for name in ("device", "push_to_hub", "repo_id", "pretrained_path"):
         values[name] = getattr(config, name)
-    values.update(input_features={}, output_features={}, load_vlm_weights=False)
+    values["load_vlm_weights"] = False
     if "temporal_embedding_cache_refresh_steps" not in explicit_fields:
         values["temporal_embedding_cache_refresh_steps"] = 5000
     return LTESmolVLAConfig(**values)
@@ -70,8 +70,21 @@ def configure_history(config, dataset, rename_map):
     expected = list(rename_map.values())
     if set(images) != set(expected):
         raise ValueError(f"Configured image rename_map expects {expected}, got {list(images)}")
-    config.input_features = {"observation.state": features["observation.state"], **{key: images[key] for key in expected}}
-    config.output_features = {"action": features["action"]}
+    expected_input_features = {
+        "observation.state": features["observation.state"],
+        **{key: images[key] for key in expected},
+    }
+    expected_output_features = {"action": features["action"]}
+    if config.input_features != expected_input_features:
+        raise ValueError(
+            "Configured policy.input_features disagrees with the dataset schema after rename_map: "
+            f"configured={config.input_features}, dataset={expected_input_features}"
+        )
+    if config.output_features != expected_output_features:
+        raise ValueError(
+            "Configured policy.output_features disagrees with the dataset schema: "
+            f"configured={config.output_features}, dataset={expected_output_features}"
+        )
     expected = os.environ.get("LTE_EXPECTED_ACTION_DIM")
     if expected is not None and features["action"].shape[0] != int(expected):
         raise ValueError(f"Dataset action dimension disagrees with configured robot ({expected})")

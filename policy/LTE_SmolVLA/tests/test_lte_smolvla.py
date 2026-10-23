@@ -199,6 +199,14 @@ def test_adapter_observes_between_chunks_and_keeps_env_identity(monkeypatch):
     assert actions[1][0]["joint_state"].item() == 1
     model.get_action_batch([9])
     assert model._temporal_states[9].item() == 1
+    model.reset_envs([2])
+    assert 2 not in model._temporal_states
+    assert 2 not in model._processed_observations
+    assert 2 not in model._latest_payloads
+    assert model._temporal_states[9].item() == 1
+    assert model.get_action_batch([9])[0][0]["joint_state"].item() == 1
+    with pytest.raises(KeyError):
+        model.get_action_batch([2])
     model.reset()
     assert not model._temporal_states
     with pytest.raises(KeyError):
@@ -222,12 +230,36 @@ def test_training_metadata_enforces_full_history_and_camera_order():
     dataset = SimpleNamespace(meta=SimpleNamespace(features=features, episodes={
         "dataset_from_index": [0, 3], "dataset_to_index": [3, 5]}))
     cfg = config()
+    configured_input_features = dict(cfg.input_features)
+    configured_output_features = dict(cfg.output_features)
     configure_history(cfg, dataset, CAMERA_RENAME)
+    assert cfg.input_features == configured_input_features
+    assert cfg.output_features == configured_output_features
     assert list(cfg.image_features) == list(CAMERA_RENAME.values())
     assert cfg._runtime_episode_ends == [3, 5]
     assert cfg._runtime_causal_prefix_length == cfg.history_max_episode_length == 3
     cfg.max_causal_history_length = 2
     with pytest.raises(ValueError, match="never truncated"):
+        configure_history(cfg, dataset, CAMERA_RENAME)
+
+
+def test_training_metadata_rejects_configured_feature_mismatch():
+    from XPolicyLab.policy.LTE_SmolVLA.train import CAMERA_RENAME
+    features = {
+        "observation.state": {"dtype": "float32", "shape": (2,)},
+        "action": {"dtype": "float32", "shape": (2,)},
+        **{key: {"dtype": "image", "shape": (3, 16, 16), "names": ["channels", "height", "width"]}
+           for key in CAMERA_RENAME},
+    }
+    dataset = SimpleNamespace(meta=SimpleNamespace(features=features, episodes={
+        "dataset_from_index": [0], "dataset_to_index": [3]}))
+    cfg = config()
+    cfg.input_features = {**cfg.input_features, "observation.state": PolicyFeature(FeatureType.STATE, (3,))}
+    with pytest.raises(ValueError, match="input_features disagrees"):
+        configure_history(cfg, dataset, CAMERA_RENAME)
+    cfg = config()
+    cfg.output_features = {"action": PolicyFeature(FeatureType.ACTION, (3,))}
+    with pytest.raises(ValueError, match="output_features disagrees"):
         configure_history(cfg, dataset, CAMERA_RENAME)
 
 
@@ -237,8 +269,12 @@ def test_base_settings_preserved_except_explicit_overrides(monkeypatch):
     base = SmolVLAConfig(device="cpu", pad_language_to="max_length", prefix_length=0,
                         chunk_size=50, n_action_steps=50, train_expert_only=False)
     monkeypatch.setattr(PreTrainedConfig, "from_pretrained", lambda _: base)
-    merged = inherit_base_config(config(), {"chunk_size", "n_action_steps"})
+    merged = inherit_base_config(
+        config(), {"chunk_size", "n_action_steps", "input_features", "output_features"}
+    )
     assert merged.chunk_size == 3 and merged.n_action_steps == 2
+    assert merged.input_features == config().input_features
+    assert merged.output_features == config().output_features
     assert merged.pad_language_to == "max_length" and merged.prefix_length == 0
     assert merged.temporal_embedding_cache_refresh_steps == 5000
     assert not merged.load_vlm_weights

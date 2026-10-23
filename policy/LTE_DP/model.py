@@ -112,11 +112,15 @@ class Model(DPModel):
                     action["arm_joint_state"] = action.pop("joint_state")
         return unpacked
 
+    def reset_envs(self, env_idx_list):
+        indices = {int(index) for index in env_idx_list}
+        for index in indices:
+            self._latents.pop(index, None)
+            self._windows.pop(index, None)
+        self._latest = [index for index in self._latest if index not in indices]
+
     def reset(self, env_idx_list=None):
         if env_idx_list is None:
             self._latents, self._windows, self._latest = {}, {}, []
         else:
-            for index in env_idx_list:
-                self._latents.pop(index, None)
-                self._windows.pop(index, None)
-            self._latest = [index for index in self._latest if index not in env_idx_list]
+            self.reset_envs(env_idx_list)

@@ -245,7 +245,7 @@ def test_native_workspace_checkpoint_selection_and_update_clock(setup):
     assert all(torch.equal(before[key], value) for key,value in adapter._latents.items())
     adapter.update_obs(obs(9))
     assert not torch.equal(before[9], adapter._latents[9])
-    adapter.reset([9])
+    adapter.reset_envs([9])
     assert 103 in adapter._latents and 9 not in adapter._latents
     adapter.reset()
     assert not adapter._latents

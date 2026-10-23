@@ -90,6 +90,8 @@ The frozen-VLM default builds the embedding cache once. When `train_expert_only=
 
 Additional `deploy.yml` keys: `checkpoint_num` selects a saved step using the baseline resolver; `pretrained_path` overrides checkpoint search; `smovla_vlm_path` optionally supplies local VLM config/tokenizer assets; `device` defaults to automatic selection; `actions_per_chunk` defaults to the checkpoint's `n_action_steps`; `prompt` is a fallback instruction. `result_dir` and `obs_transform_pipeline` retain XPolicyLab's deployment conventions.
 
+Measured bottlenecks and the ranked training optimization plan are documented in [IMPROVEMENTS.md](IMPROVEMENTS.md).
+
 ## Notes and validation
 
 The pinned base uses one current observation (`n_obs_steps=1`); LTE supplies full visual history. RTC, PEFT, RA-BC, `torch.compile`, Aloha coordinate conversions and streaming/augmented datasets are explicitly rejected. LTE-DP checkpoints from its newer LeRobot version are not assumed compatible and no automatic migration is performed. Start from XPolicyLab's SmolVLA weights and train LTE here.

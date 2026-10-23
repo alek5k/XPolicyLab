@@ -331,9 +331,9 @@ class Model(ModelTemplate):
         ]
         self._latest_payload = encoded_obs_list[0]
         self._ensure_lerobot_features(self._latest_payload)
-        self._latest_payloads = {
-            env_idx: payload for env_idx, payload in zip(self._latest_env_idx_list, encoded_obs_list)
-        }
+        self._latest_payloads.update(
+            (env_idx, payload) for env_idx, payload in zip(self._latest_env_idx_list, encoded_obs_list)
+        )
 
     def _postprocess_action_chunk(self, action_tensor: torch.Tensor) -> np.ndarray:
         if action_tensor.ndim != 3:
@@ -412,6 +412,18 @@ class Model(ModelTemplate):
             unpack_robot_state(raw_actions, self.action_type, self.robot_action_dim_info, source_type="obs")
             for raw_actions in raw_action_batch
         ]
+
+    def reset_envs(self, env_idx_list):
+        ids = {int(env_idx) for env_idx in env_idx_list}
+        for env_idx in ids:
+            self._latest_payloads.pop(env_idx, None)
+        self._latest_env_idx_list = [
+            env_idx for env_idx in self._latest_env_idx_list if env_idx not in ids
+        ]
+        if self._latest_payloads:
+            self._latest_payload = next(iter(self._latest_payloads.values()))
+        else:
+            self._latest_payload = None
 
     def reset(self):
         if self.policy is not None:
