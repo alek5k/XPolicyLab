@@ -108,7 +108,6 @@ def main():
     original_dataset = lerobot_train.make_dataset
     original_policy = lerobot_train.make_policy
     original_processors = lerobot_train.make_pre_post_processors
-    original_update_policy = lerobot_train.update_policy
 
     def make_dataset(cfg):
         if not isinstance(cfg.policy, LTESmolVLAConfig):
@@ -160,33 +159,6 @@ def main():
             )
         return policy
 
-    def update_policy_with_lte_timing(*args, **kwargs):
-        accelerator = kwargs.get("accelerator")
-        if accelerator is None and len(args) >= 6:
-            accelerator = args[5]
-        device = accelerator.device if accelerator is not None else torch.device("cpu")
-        if device.type == "cuda":
-            torch.cuda.synchronize(device)
-        started = __import__("time").perf_counter()
-        tracker, output = original_update_policy(*args, **kwargs)
-        if device.type == "cuda":
-            torch.cuda.synchronize(device)
-        total_step_seconds = __import__("time").perf_counter() - started
-        policy = args[1] if len(args) > 1 else kwargs["policy"]
-        model = accelerator.unwrap_model(policy, keep_fp32_wrapper=True).model if accelerator is not None else policy.model
-        query_seconds = float(model._last_temporal_vision_seconds)
-        output["temporal_query_total_step_seconds"] = total_step_seconds
-        output["temporal_query_vision_pct_of_step"] = 100.0 * query_seconds / max(total_step_seconds, 1e-12)
-        for metric in (
-            "temporal_vision_encoder_seconds",
-            "temporal_encoder_seconds",
-            "temporal_decoder_loss_seconds",
-            "action_forward_seconds",
-            "action_loss_seconds",
-        ):
-            output[f"{metric}_pct_of_step"] = 100.0 * float(output[metric]) / max(total_step_seconds, 1e-12)
-        return tracker, output
-
     def make_processors(policy_cfg, **kwargs):
         pre, post = original_processors(policy_cfg, **kwargs)
         for step in pre.steps:
@@ -197,7 +169,6 @@ def main():
     lerobot_train.make_dataset = make_dataset
     lerobot_train.make_policy = make_policy
     lerobot_train.make_pre_post_processors = make_processors
-    lerobot_train.update_policy = update_policy_with_lte_timing
     @parser.wrap()
     def run(cfg: TrainPipelineConfig):
         if (not cfg.resume and not parser.get_path_arg("policy")
@@ -213,7 +184,6 @@ def main():
         lerobot_train.make_dataset = original_dataset
         lerobot_train.make_policy = original_policy
         lerobot_train.make_pre_post_processors = original_processors
-        lerobot_train.update_policy = original_update_policy
 
 
 if __name__ == "__main__":

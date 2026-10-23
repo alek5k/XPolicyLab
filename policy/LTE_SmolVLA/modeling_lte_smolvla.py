@@ -36,6 +36,7 @@ from .temporal import (
     interpolate_history,
     sample_stratified_lags,
     should_refresh_embedding_cache,
+    trim_batch_padding,
 )
 
 from .dataset_cache import DatasetCache
@@ -101,12 +102,6 @@ class LTESmolVLAFlowMatching(VLAFlowMatching):
         # under gradient accumulation and survives resume checkpoints.
         self.register_buffer("_lte_optimizer_step", torch.zeros((), dtype=torch.long), persistent=True)
         self._last_embedding_cache_hit_rate = 0.0
-        self._last_temporal_vision_seconds = 0.0
-        self._last_temporal_vision_encoder_seconds = 0.0
-        self._last_temporal_encoder_seconds = 0.0
-        self._last_temporal_decoder_loss_seconds = 0.0
-        self._last_action_forward_seconds = 0.0
-        self._last_action_loss_seconds = 0.0
         self._last_temporal_vision_batch_size = 0
         self._last_temporal_vision_encoder_calls = 0
 
@@ -166,9 +161,6 @@ class LTESmolVLAFlowMatching(VLAFlowMatching):
             raise ValueError("LTE images must end with (selected_cameras, C, H, W)")
         prefix = images.shape[:-4]
         flattened = images.reshape(-1, *images.shape[-4:])
-        if flattened.device.type == "cuda":
-            torch.cuda.synchronize(flattened.device)
-        started = wall_time.perf_counter()
         self._last_temporal_vision_batch_size = int(flattened.shape[0])
         self._last_temporal_vision_encoder_calls = int(flattened.shape[1])
         per_camera: list[Tensor] = []
@@ -180,9 +172,6 @@ class LTESmolVLAFlowMatching(VLAFlowMatching):
             # the VLM. Reconstruct that same representation, not raw SigLIP.
             visual_tokens = visual_tokens * math.sqrt(visual_tokens.shape[-1])
             per_camera.append(visual_tokens.mean(dim=1))
-        if flattened.device.type == "cuda":
-            torch.cuda.synchronize(flattened.device)
-        self._last_temporal_vision_encoder_seconds += wall_time.perf_counter() - started
         return torch.cat(per_camera, dim=-1).reshape(*prefix, self.temporal_embedding_dim).detach()
 
     @torch.no_grad()
@@ -358,8 +347,6 @@ class LTESmolVLAFlowMatching(VLAFlowMatching):
             raise RuntimeError("LTE SmolVLA causal history metadata was not installed before policy construction")
         sample_indices = sample_indices.to(device=device, dtype=torch.long)
         episode_ends = self._lte_episode_ends.to(device)
-        self._last_temporal_vision_encoder_seconds = 0.0
-        self._last_temporal_encoder_seconds = 0.0
         # The raw-image timing recipe expects one live B×Q encoder call. A
         # populated detached embedding table intentionally replaces that call
         # with lookup, so it must bypass the raw-forward assertion.
@@ -374,13 +361,8 @@ class LTESmolVLAFlowMatching(VLAFlowMatching):
             valid = torch.ones_like(frames, dtype=torch.bool)
         else:
             frames, valid = causal_history_frame_indices(sample_indices, episode_ends, prefix)
-        if device.type == "cuda":
-            torch.cuda.synchronize(device)
-        started = wall_time.perf_counter()
+            frames, valid = trim_batch_padding(frames, valid)
         embeddings = self._history_embeddings(frames, valid, device)
-        if device.type == "cuda":
-            torch.cuda.synchronize(device)
-        self._last_temporal_vision_seconds = wall_time.perf_counter() - started
         if self.config.temporal_query_history_only and self._embedding_cache is None:
             expected = sample_indices.shape[0] * self.config.num_history_queries
             if self._last_temporal_vision_batch_size != expected:
@@ -388,19 +370,10 @@ class LTESmolVLAFlowMatching(VLAFlowMatching):
                     "LTE query forward did not encode all num_history_queries × batch images in one vision batch: "
                     f"expected {expected}, got {self._last_temporal_vision_batch_size}"
                 )
-        if device.type == "cuda":
-            torch.cuda.synchronize(device)
-        encoder_started = wall_time.perf_counter()
         latents = self.temporal_encoder.encode_history(embeddings, valid)
-        if device.type == "cuda":
-            torch.cuda.synchronize(device)
-        self._last_temporal_encoder_seconds = wall_time.perf_counter() - encoder_started
         return latents, embeddings, valid
 
     def history_loss(self, latents: Tensor, embeddings: Tensor, valid_mask: Tensor) -> Tensor:
-        if latents.device.type == "cuda":
-            torch.cuda.synchronize(latents.device)
-        started = wall_time.perf_counter()
         batch, length = valid_mask.shape
         last = torch.full((batch, 1), length - 1, device=latents.device, dtype=torch.long)
         first = valid_mask.long().argmax(dim=1, keepdim=True)
@@ -416,11 +389,7 @@ class LTESmolVLAFlowMatching(VLAFlowMatching):
         decoder_lags = lags * (2.0 / (max(max_length - 1, 1) + 1e-8))
         current = latents[:, -1:].unsqueeze(-2).expand(-1, -1, self.config.num_history_queries, -1)
         prediction = self.history_decoder(current, decoder_lags.unsqueeze(-1))
-        loss = F.mse_loss(prediction, targets)
-        if latents.device.type == "cuda":
-            torch.cuda.synchronize(latents.device)
-        self._last_temporal_decoder_loss_seconds = wall_time.perf_counter() - started
-        return loss
+        return F.mse_loss(prediction, targets)
 
 
 class LTESmolVLAPolicy(SmolVLAPolicy):
@@ -587,17 +556,8 @@ class LTESmolVLAPolicy(SmolVLAPolicy):
         actions = self.prepare_action(batch)
         latents, embeddings, valid = self.model.temporal_history(batch["index"], actions.device)
         token = self.model.temporal_token(latents[:, -1])
-        if actions.device.type == "cuda":
-            torch.cuda.synchronize(actions.device)
-        action_forward_started = wall_time.perf_counter()
         with self.model.use_temporal_token(token):
             losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
-        if actions.device.type == "cuda":
-            torch.cuda.synchronize(actions.device)
-        self.model._last_action_forward_seconds = wall_time.perf_counter() - action_forward_started
-        if actions.device.type == "cuda":
-            torch.cuda.synchronize(actions.device)
-        action_loss_started = wall_time.perf_counter()
         original_action_dim = self.config.action_feature.shape[0]
         losses = losses[:, :, :original_action_dim]
         action_pad = batch.get("action_is_pad")
@@ -610,9 +570,6 @@ class LTESmolVLAPolicy(SmolVLAPolicy):
         dimension_mask = dimension_mask.to(device=losses.device, dtype=torch.bool).unsqueeze(1)
         loss_mask = valid_actions.unsqueeze(-1) & dimension_mask
         action_loss = losses.mul(loss_mask).sum() / loss_mask.sum().clamp_min(1)
-        if actions.device.type == "cuda":
-            torch.cuda.synchronize(actions.device)
-        self.model._last_action_loss_seconds = wall_time.perf_counter() - action_loss_started
         history_loss = self.model.history_loss(latents, embeddings, valid)
         total = action_loss + self.config.lambda_history * history_loss
         return total, {
@@ -625,12 +582,6 @@ class LTESmolVLAPolicy(SmolVLAPolicy):
             # immutable per-rank duration in the normal training metrics so
             # W&B records the setup cost alongside the steady-state timings.
             "temporal_image_cache_build_seconds": self.model._temporal_image_cache.build_seconds,
-            "temporal_query_vision_seconds": self.model._last_temporal_vision_seconds,
-            "temporal_vision_encoder_seconds": self.model._last_temporal_vision_encoder_seconds,
-            "temporal_encoder_seconds": self.model._last_temporal_encoder_seconds,
-            "temporal_decoder_loss_seconds": self.model._last_temporal_decoder_loss_seconds,
-            "action_forward_seconds": self.model._last_action_forward_seconds,
-            "action_loss_seconds": self.model._last_action_loss_seconds,
             "temporal_query_vision_batch_size": self.model._last_temporal_vision_batch_size,
             "temporal_query_vision_encoder_calls": self.model._last_temporal_vision_encoder_calls,
         }

@@ -6,7 +6,7 @@ Diffusion Policy nor SmolVLA imports.
 """
 
 from .core import HistoryDecoder, ImageTemporalEncoder, interpolate_history, sample_stratified_lags
-from .history import causal_history_frame_indices, should_refresh_embedding_cache
+from .history import causal_history_frame_indices, should_refresh_embedding_cache, trim_batch_padding
 
 __all__ = [
     "HistoryDecoder",
@@ -15,4 +15,5 @@ __all__ = [
     "interpolate_history",
     "sample_stratified_lags",
     "should_refresh_embedding_cache",
+    "trim_batch_padding",
 ]

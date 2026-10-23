@@ -8,7 +8,12 @@ from torch import nn
 
 from XPolicyLab.policy.LTE_SmolVLA.configuration_lte_smolvla import LTESmolVLAConfig
 from XPolicyLab.policy.LTE_SmolVLA.modeling_lte_smolvla import LTESmolVLAPolicy, LTESmolVLAFlowMatching
-from XPolicyLab.policy.LTE_SmolVLA.temporal import ImageTemporalEncoder, causal_history_frame_indices
+from XPolicyLab.policy.LTE_SmolVLA.temporal import (
+    HistoryDecoder,
+    ImageTemporalEncoder,
+    causal_history_frame_indices,
+    trim_batch_padding,
+)
 from XPolicyLab.policy.LTE_SmolVLA.dataset_cache import DatasetCache
 from XPolicyLab.policy.LTE_SmolVLA.model import Model
 from XPolicyLab.policy.LTE_SmolVLA.train import configure_history
@@ -104,6 +109,44 @@ def test_history_matches_online_and_respects_episode_boundaries():
         for index in range(0 if frame < 3 else 3, frame + 1):
             online = encoder(embeddings[index:index+1], online)
         torch.testing.assert_close(latent[row], online[0])
+
+
+def test_batch_padding_trim_preserves_final_latent_and_history_loss():
+    torch.manual_seed(0)
+    encoder = ImageTemporalEncoder(16, 4, 8)
+    decoder = HistoryDecoder(4, 16, 8)
+    frames, valid = causal_history_frame_indices(
+        torch.tensor([1, 4]), torch.tensor([3, 6]), 6
+    )
+    embeddings = torch.randn(2, 6, 16).masked_fill(~valid.unsqueeze(-1), 0.0)
+    full_latents = encoder.encode_history(embeddings, valid)
+
+    active_columns = valid.any(dim=0)
+    trimmed_frames, trimmed_valid = trim_batch_padding(frames, valid)
+    trimmed_embeddings = embeddings[:, active_columns]
+    trimmed_latents = encoder.encode_history(trimmed_embeddings, trimmed_valid)
+
+    assert trimmed_frames.shape[1] < frames.shape[1]
+    assert trimmed_valid.any(dim=0).all()
+    torch.testing.assert_close(trimmed_latents[:, -1], full_latents[:, -1])
+
+    history_model = SimpleNamespace(
+        config=SimpleNamespace(
+            num_history_queries=3,
+            history_max_episode_length=6,
+            temporal_embedding_dim=16,
+        ),
+        history_decoder=decoder,
+    )
+    torch.manual_seed(1)
+    full_loss = LTESmolVLAFlowMatching.history_loss(
+        history_model, full_latents, embeddings, valid
+    )
+    torch.manual_seed(1)
+    trimmed_loss = LTESmolVLAFlowMatching.history_loss(
+        history_model, trimmed_latents, trimmed_embeddings, trimmed_valid
+    )
+    torch.testing.assert_close(trimmed_loss, full_loss)
 
 
 def test_query_history_encodes_batch_times_queries_in_one_vision_call(tiny_policy):

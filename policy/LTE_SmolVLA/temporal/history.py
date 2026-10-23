@@ -32,6 +32,14 @@ def should_refresh_embedding_cache(
     return (step_idx - middle_until) % refresh_steps == 0
 
 
+def trim_batch_padding(frame_ids: Tensor, valid_mask: Tensor) -> tuple[Tensor, Tensor]:
+    """Remove leading history positions that are invalid for the whole batch."""
+    if frame_ids.shape != valid_mask.shape or frame_ids.ndim != 2:
+        raise ValueError("frame_ids and valid_mask must have matching shape (B, T)")
+    active_columns = valid_mask.any(dim=0)
+    return frame_ids[:, active_columns], valid_mask[:, active_columns]
+
+
 def causal_history_frame_indices(
     sample_indices: Tensor, episode_ends: Tensor, prefix_length: int
 ) -> tuple[Tensor, Tensor]:
